@@ -1,0 +1,16 @@
+# data and models are versioned by DVC, not git
+/data/
+/models/*.pt
+/samples/
+/metrics/*.json
+/reports/
+/backend/var/
+.env
+__pycache__/
+*.egg-info/
+.pytest_cache/
+node_modules/
+frontend/dist/
+.venv/
+.dvc/tmp
+.dvc/cache
