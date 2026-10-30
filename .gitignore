@@ -3,7 +3,7 @@
 /models/*.pt
 /samples/
 /metrics/*.json
-/reports/
+
 /backend/var/
 .env
 __pycache__/
