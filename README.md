@@ -12,7 +12,7 @@ audit trail.
                  ┌──────────── React viewer (frontend/) ─────────────┐
  Doctor ───────► │ worklist · scan + heatmap/mask · approve/reject   │
                  └──────────────────────┬────────────────────────────┘
-                                        │ /api (JWT-style token)
+                                        │ /api (OAuth2 password flow, JWT bearer)
                  ┌──────────────────────▼────────────────────────────┐
  .dcm / .zip ──► │ FastAPI backend (backend/app)                     │
                  │  upload ──► Orthanc REST                          │
@@ -66,7 +66,8 @@ Train a real model (below), drop it into `models\`, then restart the backend
 
 ```powershell
 # 1. Orthanc: install from https://www.orthanc-server.com/download-windows.php (listens on 8042)
-# 2. Backend
+# 2. Backend (from the project root, venv active)
+pip install -e .\ml                                  # the shared medai package
 pip install -r backend\requirements.txt
 cd backend; uvicorn app.main:app --reload            # uses ..\models\*.pt by default
 # 3. Frontend (Node 20+)
@@ -105,11 +106,28 @@ cd backend && pytest -q            # full upload → worker → inference → de
 ```
 The backend test also proves tampering with any audit row is detected.
 
+## Authentication — OAuth2 password flow + JWT
+
+| | |
+|---|---|
+| Access token | JWT, HS256, 15 min, `Authorization: Bearer <token>`; claims `sub, username, role, ver, iss, aud, iat, nbf, exp, jti, typ` |
+| Refresh token | JWT, 7 days, stored by `jti` in the DB, **rotated on every use**; replaying an old one revokes the whole session family |
+| Passwords | bcrypt (cost 12), users table; `USERS` in `.env` only seeds the first start |
+| Revocation | disabling a user, resetting or changing a password bumps `token_version` → all their tokens die immediately |
+| Brute force | 5 failed logins → 15 min lockout per username (HTTP 429 + `Retry-After`); constant-time check for unknown users |
+| Swagger | `/docs` → **Authorize** → enter username + password → every request is sent with the JWT |
+
+Production would swap the local user table for the hospital identity provider via OpenID Connect
+(Keycloak, Azure AD) and verify RS256 tokens with the provider's public keys; only `current_user` changes.
+
 ## API (full OpenAPI at `/docs`)
 
 | Method | Path | Who |
 |---|---|---|
-| POST | `/api/auth/login` | anyone |
+| POST | `/api/auth/token` (OAuth2 form) · `/api/auth/login` (JSON) | anyone |
+| POST | `/api/auth/refresh` · `/api/auth/logout` `{refresh_token}` | token holder |
+| GET / POST | `/api/me` · `/api/me/password` | signed in |
+| GET / POST / PATCH | `/api/users`, `/api/users/{id}` | admin |
 | POST | `/api/upload` (`.dcm` or `.zip`) | clinician, admin |
 | GET | `/api/studies`, `/api/studies/{id}` | signed in |
 | GET | `/api/studies/{id}/image.png` · `heatmap.png` · `slices/{k}.png?layer=image|mask` | signed in |
@@ -133,5 +151,5 @@ The backend test also proves tampering with any audit row is detected.
 
 Grad-CAM is coarse (10×10 at 320 px) and can highlight shortcuts. RSNA labels come from a
 single source with known AP/PA and ICU confounding. Synthetic samples only test plumbing.
-Auth is demo-grade (env-defined users, HMAC tokens) — production needs the hospital IdP, HTTPS,
+Auth uses a local user table — production needs the hospital IdP (OIDC/SSO with MFA), HTTPS,
 encryption at rest, and a DPDP Act 2023 / HIPAA-style data-protection review.
