@@ -256,6 +256,40 @@ def test_bruteforce_lockout(client):
     assert r.status_code == 429 and "Retry-After" in r.headers
 
 
+def test_classifier_not_run_on_non_chest_xray(client):
+    """A single CT slice (or a brain MR) must NOT get a 'Lung Opacity' score."""
+    h = token(client, "dr.a")
+    one = sorted((SAMPLES / "synthetic_ct").glob("*.dcm"))[0].read_bytes()
+    import pydicom
+    ds = pydicom.dcmread(io.BytesIO(one))
+    ds.StudyInstanceUID = pydicom.uid.generate_uid()  # a separate single-slice study
+    ds.SeriesInstanceUID = pydicom.uid.generate_uid()
+    ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
+    b = io.BytesIO(); ds.save_as(b)
+    r = client.post("/api/upload", headers=h, files=[("files", ("one.dcm", b.getvalue(), "application/dicom"))])
+    sid_orthanc = r.json()["studies"][0]
+    sid = next(s["id"] for s in client.get("/api/studies", headers=h).json() if s["orthanc_id"] == sid_orthanc)
+    st = wait_status(client, h, sid, {"no_model", "awaiting_review", "failed"})
+    assert st["status"] == "no_model" and st["predictions"] == []
+    assert "only supports chest X-rays" in st["error"] and st["has_image"]
+
+
+def test_restart_recovers_stuck_queued_study(client):
+    """After a backend restart the in-memory queue is empty; studies left 'queued' must still get processed."""
+    import app.main as main
+    from app.db.db import SessionLocal, Study
+    h = token(client, "dr.a")
+    cxr_orthanc_id = next(sid for sid, ser in client.fake.studies.items()
+                          if client.fake.series[ser[0]]["MainDicomTags"]["Modality"] == "DX")
+    with SessionLocal() as s:
+        st = s.query(Study).filter_by(orthanc_id=cxr_orthanc_id).one()
+        st.status = "queued"  # simulate: queued, then the server restarted before the job ran
+        s.commit()
+        sid = st.id
+    assert main.state["worker"].recover_pending() >= 1
+    assert wait_status(client, h, sid, {"awaiting_review", "failed"})["status"] == "awaiting_review"
+
+
 def test_tampering_is_detected(client):
     h = token(client, "dr.a")
     from app.db.db import AuditEvent, SessionLocal

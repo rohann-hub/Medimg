@@ -21,6 +21,7 @@ from ..db.db import Prediction, Study
 from .orthanc import Orthanc
 
 log = logging.getLogger("inference")
+CHEST_XRAY_MODALITIES = {"CR", "DX"}  # what the RSNA-trained classifier has actually seen
 
 
 def _sha256(path: Path) -> str:
@@ -112,8 +113,15 @@ def process_study(db: Session, reg: Registry, orthanc: Orthanc, orthanc_study_id
             img = to_display_array(first)
             (out / "image.png").write_bytes(gray_png(img))
             study.n_slices = 1
-            if reg.cls is None:
+            # The classifier was trained on adult chest X-rays only. Never run it on a brain MR, a CT slice, a
+            # knee X-ray … — it would still output a confident-looking "Lung Opacity" score, which is meaningless.
+            body = str(getattr(first, "BodyPartExamined", "") or "").upper()
+            supported = modality in CHEST_XRAY_MODALITIES and body in ("", "CHEST", "THORAX", "LUNG")
+            if reg.cls is None or not supported:
                 study.status = "no_model"
+                if not supported:
+                    study.error = (f"AI not run: the classifier only supports chest X-rays (CR/DX); "
+                                   f"this study is {modality}{' ' + body if body else ''}.")
             else:
                 t0 = time.perf_counter()
                 res = classify(reg.cls, reg.cls_meta, img)

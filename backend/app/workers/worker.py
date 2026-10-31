@@ -10,7 +10,7 @@ import logging
 import queue
 import threading
 
-from ..db.db import KV, SessionLocal
+from ..db.db import KV, SessionLocal, Study
 from ..services.inference import Registry, process_study
 from ..services.orthanc import Orthanc
 
@@ -68,7 +68,19 @@ class Worker:
             with SessionLocal() as db:
                 process_study(db, self.reg, self.orthanc, sid, actor)
 
+    def recover_pending(self) -> int:
+        """The job queue lives in memory, so a restart (e.g. uvicorn --reload after a file save) loses it,
+        while the Orthanc change-feed cursor has already moved past those studies. Re-queue anything that
+        was left 'queued' or 'processing' so no study is stuck forever."""
+        with SessionLocal() as db:
+            ids = [s.orthanc_id for s in db.query(Study).filter(Study.status.in_(("queued", "processing")))]
+        for sid in ids:
+            log.info("re-queueing unfinished study %s", sid)
+            self.enqueue(sid)
+        return len(ids)
+
     def start(self) -> None:
+        self.recover_pending()
         for fn in (self._poll_loop, self._run_loop):
             t = threading.Thread(target=fn, daemon=True, name=fn.__name__)
             t.start()
