@@ -31,14 +31,15 @@ def client(tmp_path_factory):
     os.environ.update({
         "DATABASE_URL": f"sqlite:///{tmp}/app.db", "ARTIFACT_DIR": str(tmp / "art"),
         "CLS_MODEL_PATH": str(ROOT / "models/classifier.pt"), "SEG_MODEL_PATH": str(ROOT / "models/segmentation.pt"),
-        "POLL_SECONDS": "0.2", "USERS": "dr.a:pw:clinician,admin:pw:admin", "SECRET_KEY": "test",
+        "POLL_SECONDS": "0.2", "USERS": "dr.a:pw:clinician,admin:pw:admin,dr.b:pw:clinician",
+        "JWT_SECRET": "test-secret-that-is-long-enough-for-hs256", "LOGIN_MAX_FAILURES": "3",
     })
     sys.path.insert(0, str(ROOT / "backend"))
     for m in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
         del sys.modules[m]
     from fastapi.testclient import TestClient
     import app.main as main
-    from app.db import SessionLocal
+    from app.db.db import SessionLocal
 
     import pydicom
 
@@ -95,7 +96,7 @@ def client(tmp_path_factory):
 def token(c, user):
     r = c.post("/api/auth/login", json={"username": user, "password": "pw"})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 def wait_status(c, h, sid, want, timeout=120):
@@ -111,6 +112,7 @@ def wait_status(c, h, sid, want, timeout=120):
 def test_auth_required(client):
     assert client.get("/api/studies").status_code == 401
     assert client.post("/api/auth/login", json={"username": "dr.a", "password": "nope"}).status_code == 401
+    assert client.get("/api/studies", headers={"Authorization": "Bearer not.a.jwt"}).status_code == 401
 
 
 def test_rejects_non_dicom(client):
@@ -170,9 +172,93 @@ def test_ct_zip_flow_segmentation(client):
     assert client.get(f"/api/studies/{sid}/slices/0.png?layer=mask", headers=h).status_code in (200, 204)
 
 
+def test_oauth2_form_token_and_jwt_claims(client):
+    import jwt as pyjwt
+    r = client.post("/api/auth/token", data={"username": "dr.a", "password": "pw"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["token_type"] == "bearer" and body["expires_in"] == 15 * 60
+    claims = pyjwt.decode(body["access_token"], options={"verify_signature": False})
+    assert claims["typ"] == "access" and claims["role"] == "clinician" and claims["aud"] == "medimg-api"
+    assert "password" not in str(claims)
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {body['access_token']}"}).json()["username"] == "dr.a"
+
+
+def test_refresh_token_cannot_be_used_as_access_token(client):
+    rt = client.post("/api/auth/token", data={"username": "dr.a", "password": "pw"}).json()["refresh_token"]
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {rt}"}).status_code == 401
+
+
+def test_forged_and_expired_tokens_rejected(client):
+    import datetime as dt
+    import jwt as pyjwt
+    now = dt.datetime.now(dt.timezone.utc)
+    base = {"sub": "1", "role": "admin", "ver": 0, "typ": "access", "iss": "medimg-capstone", "aud": "medimg-api",
+            "iat": now, "jti": "x"}
+    forged = pyjwt.encode({**base, "exp": now + dt.timedelta(minutes=5)}, "wrong-secret-wrong-secret-wrong-secret", "HS256")
+    expired = pyjwt.encode({**base, "iat": now - dt.timedelta(hours=1), "exp": now - dt.timedelta(minutes=5)},
+                           "test-secret-that-is-long-enough-for-hs256", "HS256")
+    unsigned = pyjwt.encode({**base, "exp": now + dt.timedelta(minutes=5)}, None, algorithm="none")
+    for tok in (forged, expired, unsigned):
+        assert client.get("/api/me", headers={"Authorization": f"Bearer {tok}"}).status_code == 401
+    r = client.get("/api/me", headers={"Authorization": f"Bearer {expired}"})
+    assert r.json()["detail"] == "token expired" and "invalid_token" in r.headers["www-authenticate"]
+
+
+def test_refresh_rotation_and_reuse_detection(client):
+    t1 = client.post("/api/auth/login", json={"username": "dr.a", "password": "pw"}).json()
+    t2 = client.post("/api/auth/refresh", json={"refresh_token": t1["refresh_token"]}).json()
+    assert t2["refresh_token"] != t1["refresh_token"]
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {t2['access_token']}"}).status_code == 200
+    # replaying the old refresh token = theft → whole family revoked, including the new one
+    assert client.post("/api/auth/refresh", json={"refresh_token": t1["refresh_token"]}).status_code == 401
+    assert client.post("/api/auth/refresh", json={"refresh_token": t2["refresh_token"]}).status_code == 401
+
+
+def test_logout_revokes_refresh_token(client):
+    t = client.post("/api/auth/login", json={"username": "dr.a", "password": "pw"}).json()
+    assert client.post("/api/auth/logout", json={"refresh_token": t["refresh_token"]}).status_code == 204
+    assert client.post("/api/auth/refresh", json={"refresh_token": t["refresh_token"]}).status_code == 401
+
+
+def test_admin_user_management_and_deactivation(client):
+    admin = token(client, "admin")
+    assert client.get("/api/users", headers=token(client, "dr.a")).status_code == 403
+    r = client.post("/api/users", headers=admin, json={"username": "Dr.New", "password": "longenough1", "role": "clinician"})
+    assert r.status_code == 201 and r.json()["username"] == "dr.new"
+    assert client.post("/api/users", headers=admin, json={"username": "x1", "password": "short", "role": "clinician"}).status_code == 422
+    t = client.post("/api/auth/login", json={"username": "dr.new", "password": "longenough1"}).json()
+    h = {"Authorization": f"Bearer {t['access_token']}"}
+    assert client.get("/api/me", headers=h).status_code == 200
+    uid = r.json()["id"]
+    assert client.patch(f"/api/users/{uid}", headers=admin, json={"is_active": False}).status_code == 200
+    # disabling kills the still-unexpired access token and the refresh token immediately
+    assert client.get("/api/me", headers=h).status_code == 401
+    assert client.post("/api/auth/refresh", json={"refresh_token": t["refresh_token"]}).status_code == 401
+    assert client.post("/api/auth/login", json={"username": "dr.new", "password": "longenough1"}).status_code == 401
+    me = client.get("/api/me", headers=admin).json()
+    assert client.patch(f"/api/users/{me['id']}", headers=admin, json={"is_active": False}).status_code == 400
+
+
+def test_password_change_signs_out_other_sessions(client):
+    t = client.post("/api/auth/login", json={"username": "dr.b", "password": "pw"}).json()
+    h = {"Authorization": f"Bearer {t['access_token']}"}
+    assert client.post("/api/me/password", headers=h, json={"current_password": "bad", "new_password": "newpass123"}).status_code == 400
+    assert client.post("/api/me/password", headers=h, json={"current_password": "pw", "new_password": "newpass123"}).status_code == 204
+    assert client.get("/api/me", headers=h).status_code == 401
+    assert client.post("/api/auth/login", json={"username": "dr.b", "password": "newpass123"}).status_code == 200
+
+
+def test_bruteforce_lockout(client):
+    for _ in range(3):
+        assert client.post("/api/auth/login", json={"username": "dr.b", "password": "wrong"}).status_code == 401
+    r = client.post("/api/auth/login", json={"username": "dr.b", "password": "newpass123"})
+    assert r.status_code == 429 and "Retry-After" in r.headers
+
+
 def test_tampering_is_detected(client):
     h = token(client, "dr.a")
-    from app.db import AuditEvent, SessionLocal
+    from app.db.db import AuditEvent, SessionLocal
     with SessionLocal() as s:
         ev = s.get(AuditEvent, 2)
         ev.actor = "someone-else"

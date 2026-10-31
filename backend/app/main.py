@@ -10,13 +10,15 @@ from typing import Literal
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from .services import audit
-from .auth.auth import check_password, current_user, issue, require_role
+from .auth.auth import (authenticate, current_user, hash_password, issue_tokens, require_role, revoke_all_for_user,
+                   revoke_refresh, rotate_refresh, seed_users, validate_new_password, verify_password)
 from .core.config import DISCLAIMER, settings
-from .db.db import AuditEvent, Decision, Prediction, SessionLocal, Study, init_db
+from .db.db import AuditEvent, Decision, Prediction, SessionLocal, Study, User, init_db
 from .services.inference import Registry, artifact_dir
 from .services.orthanc import Orthanc
 from .workers.worker import Worker
@@ -28,6 +30,11 @@ state: dict = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if settings.jwt_secret.startswith("dev-only"):
+        logging.getLogger("auth").warning("JWT_SECRET is the development default — set it in .env before any real use")
+    with SessionLocal() as s:
+        if n := seed_users(s):
+            logging.getLogger("auth").info("seeded %d user(s) from USERS", n)
     state["registry"] = Registry()
     state["orthanc"] = Orthanc()
     state["worker"] = Worker(state["registry"], state["orthanc"], settings.poll_seconds)
@@ -37,7 +44,7 @@ async def lifespan(app: FastAPI):
     state["worker"].stop()
 
 
-app = FastAPI(title="AI-Assisted Medical Imaging — decision support", lifespan=lifespan)
+app = FastAPI(title="AI-Assisted Medical Imaging — decision support (educational)", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 
 
@@ -70,8 +77,31 @@ def db():
 
 # ---------------------------------------------------------------- schemas
 class LoginIn(BaseModel):
-    username: str
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=128)
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$")
     password: str
+    role: Literal["clinician", "admin"]
+    full_name: str | None = Field(default=None, max_length=128)
+
+
+class UserUpdateIn(BaseModel):
+    role: Literal["clinician", "admin"] | None = None
+    is_active: bool | None = None
+    full_name: str | None = Field(default=None, max_length=128)
+    password: str | None = None
 
 
 class DecisionIn(BaseModel):
@@ -124,19 +154,108 @@ def info():
     return {"disclaimer": DISCLAIMER, "models": state["registry"].describe()}
 
 
-@app.post("/api/auth/login")
+# ---------------------------------------------------------------- auth (OAuth2 password flow + JWT)
+def _login(s, username: str, password: str, via: str) -> dict:
+    try:
+        user = authenticate(s, username, password)
+    except HTTPException as e:
+        audit.log(s, username.strip().lower()[:64], "login_failed", details={"via": via, "reason": e.detail})
+        raise
+    audit.log(s, user.username, "login", "user", user.id, {"via": via})
+    return issue_tokens(s, user)
+
+
+@app.post("/api/auth/token", tags=["auth"])
+def oauth2_token(form: OAuth2PasswordRequestForm = Depends(), s=Depends(db)):
+    """OAuth2 token endpoint (form-encoded `username` + `password`). Used by Swagger's **Authorize** button."""
+    return _login(s, form.username, form.password, "oauth2_form")
+
+
+@app.post("/api/auth/login", tags=["auth"])
 def login(body: LoginIn, s=Depends(db)):
-    u = check_password(body.username, body.password)
-    if not u:
-        audit.log(s, body.username[:64], "login_failed")
-        raise HTTPException(401, "invalid credentials")
-    audit.log(s, u["username"], "login")
-    return {"token": issue(u["username"], u["role"]), "user": u}
+    """Same as /api/auth/token but takes JSON — used by the React viewer."""
+    return _login(s, body.username, body.password, "json")
 
 
-@app.get("/api/me")
+@app.post("/api/auth/refresh", tags=["auth"])
+def refresh(body: RefreshIn, s=Depends(db)):
+    """Exchange a refresh token for a new access + refresh pair. The old refresh token stops working."""
+    try:
+        user, tokens = rotate_refresh(s, body.refresh_token)
+    except HTTPException as e:
+        if "reuse" in str(e.detail):
+            audit.log(s, "system", "refresh_token_reuse_detected", details={"detail": e.detail})
+        raise
+    return tokens
+
+
+@app.post("/api/auth/logout", tags=["auth"], status_code=204)
+def logout(body: RefreshIn, s=Depends(db)):
+    revoke_refresh(s, body.refresh_token)
+    return Response(status_code=204)
+
+
+@app.get("/api/me", tags=["auth"])
 def me(user=Depends(current_user)):
     return user
+
+
+@app.post("/api/me/password", tags=["auth"], status_code=204)
+def change_password(body: PasswordChangeIn, user=Depends(current_user), s=Depends(db)):
+    u = s.get(User, user["id"])
+    if not verify_password(body.current_password, u.password_hash):
+        raise HTTPException(400, "current password is incorrect")
+    validate_new_password(body.new_password)
+    u.password_hash = hash_password(body.new_password)
+    revoke_all_for_user(s, u)  # signs out every other session
+    audit.log(s, u.username, "password_changed", "user", u.id)
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------- user management (admin)
+def ser_user(u: User) -> dict:
+    return {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role, "is_active": u.is_active,
+            "created_at": u.created_at.isoformat(),
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None}
+
+
+@app.get("/api/users", tags=["users"])
+def list_users(admin=Depends(require_role("admin")), s=Depends(db)):
+    return [ser_user(u) for u in s.scalars(select(User).order_by(User.id))]
+
+
+@app.post("/api/users", tags=["users"], status_code=201)
+def create_user(body: UserCreateIn, admin=Depends(require_role("admin")), s=Depends(db)):
+    name = body.username.lower()
+    if s.scalar(select(User).where(User.username == name)):
+        raise HTTPException(409, "username already exists")
+    validate_new_password(body.password)
+    u = User(username=name, full_name=body.full_name, role=body.role, password_hash=hash_password(body.password))
+    s.add(u)
+    s.commit()
+    audit.log(s, admin["username"], "user_created", "user", u.id, {"username": name, "role": body.role})
+    return ser_user(u)
+
+
+@app.patch("/api/users/{user_id}", tags=["users"])
+def update_user(user_id: int, body: UserUpdateIn, admin=Depends(require_role("admin")), s=Depends(db)):
+    u = s.get(User, user_id)
+    if not u:
+        raise HTTPException(404, "user not found")
+    if u.id == admin["id"] and (body.is_active is False or (body.role and body.role != "admin")):
+        raise HTTPException(400, "you cannot deactivate or demote yourself")
+    changes = body.model_dump(exclude_unset=True, exclude={"password"})
+    for k, v in changes.items():
+        setattr(u, k, v)
+    if body.password is not None:
+        validate_new_password(body.password)
+        u.password_hash = hash_password(body.password)
+        changes["password"] = "reset"
+    s.commit()
+    if body.password is not None or body.is_active is False:
+        revoke_all_for_user(s, u)
+    audit.log(s, admin["username"], "user_updated", "user", u.id, changes)
+    return ser_user(u)
 
 
 @app.post("/api/upload")
@@ -151,6 +270,11 @@ async def upload(files: list[UploadFile] = File(...), user=Depends(require_role(
                 blobs += [(n, z.read(n)) for n in z.namelist() if not n.endswith("/")]
         else:
             blobs.append((f.filename or "file", data))
+    try:
+        state["orthanc"].system()
+    except Exception as e:
+        raise HTTPException(503, f"Orthanc is not reachable at {settings.orthanc_url} ({type(e).__name__}). "
+                                 "Start Orthanc and try again.")
     studies, rejected = set(), []
     for name, b in blobs:
         if len(b) < 132 or b[128:132] != b"DICM":
