@@ -67,6 +67,7 @@ Train a real model (below), drop it into `models\`, then restart the backend
 ```powershell
 # 1. Orthanc: install from https://www.orthanc-server.com/download-windows.php (listens on 8042)
 # 2. Backend (from the project root, venv active)
+python -m venv .venv; .venv\Scripts\activate
 pip install -e .\ml                                  # the shared medai package
 pip install -r backend\requirements.txt
 cd backend; uvicorn app.main:app --reload            # uses ..\models\*.pt by default
