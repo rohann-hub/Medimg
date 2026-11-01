@@ -1,0 +1,59 @@
+# DVC pipeline. `dvc repro` runs only the stages whose deps/params changed.
+# `dvc dag` draws the graph; `dvc metrics show` / `dvc metrics diff` compare experiments.
+stages:
+  prepare:
+    cmd: python ml/scripts/prepare_rsna.py
+    deps:
+      - ml/scripts/prepare_rsna.py
+      - ml/medai/dicom_io.py
+      - data/raw/rsna
+    params:
+      - prepare
+    outs:
+      - data/processed/rsna
+
+  train_cls:
+    cmd: python ml/scripts/train_classifier.py
+    deps:
+      - ml/scripts/train_classifier.py
+      - ml/medai/models.py
+      - ml/medai/transforms.py
+      - data/processed/rsna
+    params:
+      - train_cls
+    outs:
+      - models/classifier.pt
+    metrics:
+      - metrics/train_cls.json:
+          cache: false
+
+  evaluate_cls:
+    cmd: python ml/scripts/evaluate_classifier.py
+    deps:
+      - ml/scripts/evaluate_classifier.py
+      - ml/medai/predict.py
+      - ml/medai/gradcam.py
+      - models/classifier.pt
+      - data/processed/rsna
+    metrics:
+      - metrics/eval_cls.json:
+          cache: false
+    plots:
+      - reports/roc.png:
+          cache: false
+    outs:
+      - reports/eval_cls.md:
+          cache: false
+
+  train_seg:
+    cmd: python ml/scripts/train_segmentation.py
+    deps:
+      - ml/scripts/train_segmentation.py
+      - ml/medai/models.py
+    params:
+      - train_seg
+    outs:
+      - models/segmentation.pt
+    metrics:
+      - metrics/train_seg.json:
+          cache: false
