@@ -2,7 +2,7 @@
 /data/
 /models/*.pt
 /samples/
-/metrics/*.json
+#/metrics/*.json
 
 /backend/var/
 .env
