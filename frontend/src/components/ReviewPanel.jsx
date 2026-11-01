@@ -138,7 +138,7 @@ export default function ReviewPanel({ study, predictions, user, onDecided }) {
     <aside className="review">
       {ordered.length === 0 && (
         <div className="card muted small">
-          {study.status === "no_model" ? "No AI model is configured for this modality — image is viewable only." : "No AI result yet."}
+          {study.status === "no_model" ? (study.error || "No AI model is configured for this modality — image is viewable only.") : "No AI result yet."}
         </div>
       )}
       {ordered.map((p) => <PredictionCard key={p.id} p={p} user={user} onDecided={onDecided} />)}
