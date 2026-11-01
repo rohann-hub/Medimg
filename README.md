@@ -53,14 +53,14 @@ python ml\scripts\make_sample_dicoms.py --out samples
 docker compose up --build
 ```
 
-Open http://localhost:8080, sign in (`dr.demo` / `demo123` by default), drag
+Open http://localhost:8080, sign in  drag
 `samples\synthetic_cxr_1.dcm` onto **Upload DICOM**. About 5–10 s later (Orthanc's
 `StableAge` + inference) the study shows **Needs review** with a heatmap. For CT, zip the
 `samples\synthetic_ct` folder and upload the zip.
 
 A red banner stays up while the **untrained placeholder** model is loaded — its outputs are random.
 Train a real model (below), drop it into `models\`, then restart the backend
-(or call `POST /api/admin/reload-models` as admin).
+
 
 ### Without Docker (development)
 
