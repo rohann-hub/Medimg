@@ -1,0 +1,46 @@
+# docker compose up --build
+#   Viewer:            http://localhost:8080
+#   API docs:          http://localhost:8000/docs
+#   Orthanc Explorer:  http://localhost:8042   (user/pass from .env)
+#   DICOM C-STORE:     localhost:4242, AE title ORTHANC
+services:
+  orthanc:
+    image: orthancteam/orthanc:24.10.3
+    restart: unless-stopped
+    ports: ["8042:8042", "4242:4242"]
+    environment:
+      ORTHANC__NAME: "MedImg Capstone PACS"
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REGISTERED_USERS: '{"${ORTHANC_USER:-orthanc}": "${ORTHANC_PASSWORD:-orthanc}"}'
+      ORTHANC__DICOM_AET: "ORTHANC"
+      ORTHANC__STABLE_AGE: "5"          # seconds of silence before a study counts as complete → StableStudy
+      ORTHANC__STORAGE_COMPRESSION: "false"
+      DICOM_WEB_PLUGIN_ENABLED: "true"  # DICOMweb (QIDO/WADO/STOW) for OHIF or other viewers
+    volumes:
+      - orthanc-db:/var/lib/orthanc/db
+
+  backend:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    restart: unless-stopped
+    depends_on: [orthanc]
+    ports: ["8000:8000"]
+    env_file: .env
+    environment:
+      ORTHANC_URL: http://orthanc:8042
+      DATABASE_URL: sqlite:////srv/backend/var/app.db
+      ARTIFACT_DIR: /srv/backend/var/artifacts
+      CLS_MODEL_PATH: /models/classifier.pt
+      SEG_MODEL_PATH: /models/segmentation.pt
+    volumes:
+      - ./models:/models:ro
+      - backend-data:/srv/backend/var
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on: [backend]
+    ports: ["8080:80"]
+
+volumes:
+  orthanc-db:
+  backend-data:

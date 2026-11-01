@@ -1,0 +1,12 @@
+data
+models
+samples
+reports
+.dvc
+.git
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+backend/var
+frontend/dist
+.env
