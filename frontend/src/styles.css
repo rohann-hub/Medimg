@@ -273,6 +273,30 @@ button.small { font-size: 12px; padding: 4px 8px; }
   user-select: none;
 }
 
+.nav-orbital-logo {
+  height: 44px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(56, 87, 245, 0.2));
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+.nav-orbital-logo:hover {
+  transform: scale(1.05);
+  filter: drop-shadow(0 4px 14px rgba(56, 87, 245, 0.4));
+}
+
+.nav-cross-logo {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(56, 87, 245, 0.25));
+  transition: transform 0.3s ease;
+}
+.nav-brand:hover .nav-cross-logo {
+  transform: rotate(15deg) scale(1.08);
+}
+
+
 .brand-flower-icon {
   width: 38px;
   height: 38px;
@@ -292,6 +316,30 @@ button.small { font-size: 12px; padding: 4px 8px; }
   width: 100%;
   height: 100%;
 }
+
+/* New PNG logo icon */
+.brand-logo-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 4px 12px rgba(56, 87, 245, 0.3));
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+.brand-logo-icon:hover {
+  transform: scale(1.1);
+  filter: drop-shadow(0 6px 16px rgba(56, 87, 245, 0.45));
+}
+.brand-logo-icon.small-icon {
+  width: 30px;
+  height: 30px;
+}
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 
 .brand-text {
   display: flex;
