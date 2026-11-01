@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { api } from "../api.js";
 import MedicalVisual from "./MedicalVisual.jsx";
+import medCrossLogo from "../assets/Blue Gradient Medical Cross Emblem.png";
+import orbitalLogo from "../assets/DO! MedImg AI Orbital Logo.png";
 
 export default function Login({ onLogin, onNavigateHome }) {
   const [username, setU] = useState("");
@@ -50,23 +52,8 @@ export default function Login({ onLogin, onNavigateHome }) {
         {/* Navigation bar with Back to Website */}
         <header className="login-top-bar">
           <div className="nav-brand" onClick={onNavigateHome} style={{ cursor: "pointer" }}>
-            <div className="brand-flower-icon" aria-hidden="true">
-              <svg viewBox="0 0 32 32" className="flower-svg">
-                <circle cx="16" cy="16" r="4.5" fill="#3857F5" />
-                <ellipse cx="16" cy="6.5" rx="2.8" ry="5.5" fill="#3857F5" />
-                <ellipse cx="16" cy="25.5" rx="2.8" ry="5.5" fill="#3857F5" />
-                <ellipse cx="6.5" cy="16" rx="5.5" ry="2.8" fill="#3857F5" />
-                <ellipse cx="25.5" cy="16" rx="5.5" ry="2.8" fill="#3857F5" />
-                <ellipse cx="9.2" cy="9.2" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(45 9.2 9.2)" />
-                <ellipse cx="22.8" cy="22.8" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(45 22.8 22.8)" />
-                <ellipse cx="22.8" cy="9.2" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(-45 22.8 9.2)" />
-                <ellipse cx="9.2" cy="22.8" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(-45 9.2 22.8)" />
-              </svg>
-            </div>
-            <div className="brand-text">
-              <span className="brand-do">DO!</span>
-              <span className="brand-title">MedImg <span className="brand-sub">AI</span></span>
-            </div>
+            <img src={medCrossLogo} alt="" className="nav-cross-logo" aria-hidden="true" />
+            <img src={orbitalLogo} alt="DO! MedImg AI" className="nav-orbital-logo" />
           </div>
 
           <button className="btn-back-home" onClick={onNavigateHome}>
