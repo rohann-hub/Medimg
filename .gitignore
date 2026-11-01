@@ -14,3 +14,6 @@ frontend/dist/
 .venv/
 .dvc/tmp
 .dvc/cache
+frontend/node_modules
+frontend/package-lock.json
+
