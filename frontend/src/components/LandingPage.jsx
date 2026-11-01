@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import MedicalVisual from "./MedicalVisual.jsx";
+import medCrossLogo from "../assets/Blue Gradient Medical Cross Emblem.png";
+import orbitalLogo from "../assets/DO! MedImg AI Orbital Logo.png";
 
 export default function LandingPage({ onNavigateLogin }) {
   const [activeStep, setActiveStep] = useState(0);
@@ -187,24 +189,8 @@ export default function LandingPage({ onNavigateLogin }) {
         {/* Top Navbar */}
         <header className="landing-nav">
           <div className="nav-brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <div className="brand-flower-icon" aria-hidden="true">
-              {/* Reference image inspired multi-petal emblem */}
-              <svg viewBox="0 0 32 32" className="flower-svg">
-                <circle cx="16" cy="16" r="4.5" fill="#3857F5" />
-                <ellipse cx="16" cy="6.5" rx="2.8" ry="5.5" fill="#3857F5" />
-                <ellipse cx="16" cy="25.5" rx="2.8" ry="5.5" fill="#3857F5" />
-                <ellipse cx="6.5" cy="16" rx="5.5" ry="2.8" fill="#3857F5" />
-                <ellipse cx="25.5" cy="16" rx="5.5" ry="2.8" fill="#3857F5" />
-                <ellipse cx="9.2" cy="9.2" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(45 9.2 9.2)" />
-                <ellipse cx="22.8" cy="22.8" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(45 22.8 22.8)" />
-                <ellipse cx="22.8" cy="9.2" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(-45 22.8 9.2)" />
-                <ellipse cx="9.2" cy="22.8" rx="2.8" ry="5.5" fill="#3857F5" transform="rotate(-45 9.2 22.8)" />
-              </svg>
-            </div>
-            <div className="brand-text">
-              <span className="brand-do">DO!</span>
-              <span className="brand-title">MedImg <span className="brand-sub">AI</span></span>
-            </div>
+            <img src={medCrossLogo} alt="" className="nav-cross-logo" aria-hidden="true" />
+            <img src={orbitalLogo} alt="DO! MedImg AI" className="nav-orbital-logo" />
           </div>
 
           <nav className="nav-center-links">
@@ -445,14 +431,8 @@ export default function LandingPage({ onNavigateLogin }) {
           <div className="footer-top-grid">
             <div className="footer-brand-column">
               <div className="footer-brand-head">
-                <div className="brand-flower-icon small-icon" aria-hidden="true">
-                  <svg viewBox="0 0 32 32" className="flower-svg">
-                    <circle cx="16" cy="16" r="4.5" fill="#3857F5" />
-                    <ellipse cx="16" cy="6.5" rx="2.8" ry="5.5" fill="#3857F5" />
-                    <ellipse cx="16" cy="25.5" rx="2.8" ry="5.5" fill="#3857F5" />
-                    <ellipse cx="6.5" cy="16" rx="5.5" ry="2.8" fill="#3857F5" />
-                    <ellipse cx="25.5" cy="16" rx="5.5" ry="2.8" fill="#3857F5" />
-                  </svg>
+                <div className="brand-logo-icon small-icon" aria-hidden="true">
+                  <img src={medCrossLogo} alt="MedImg AI Logo" className="brand-logo-img" />
                 </div>
                 <span className="footer-brand-name">MedImg AI</span>
               </div>
